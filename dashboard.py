@@ -3,6 +3,22 @@ import pandas as pd
 
 st.set_page_config(page_title="Weekly Line Schedule", layout="wide")
 
+# ---- NUDE PURPLE THEME ----
+st.markdown("""
+<style>
+.stApp { background-color: #f3ede9; }
+h1, h2, h3, p, span, label, div { color: #4a3f4a; }
+div[data-testid="stMetric"] {
+    background-color: #f9f2f6;
+    border: 1px solid #e2d3de;
+    border-radius: 10px;
+    padding: 1rem 1.2rem;
+}
+div[data-testid="stMetric"] label { color: #8a7086 !important; }
+div[data-testid="stMetricValue"] { color: #8a5a8f; }
+</style>
+""", unsafe_allow_html=True)
+
 st.markdown("# 🗓️ Weekly Line Schedule")
 st.caption("What model is running on each line, each day this week — with Qual runs flagged.")
 
@@ -101,7 +117,7 @@ pivot_qual.columns = pivot_desc.columns
 
 
 def highlight_qual(_):
-    styles = pivot_qual.applymap(lambda v: "background-color: #ffd9d9; font-weight: 600;" if v else "")
+    styles = pivot_qual.map(lambda v: "background-color: #e6c9e0; font-weight: 600;" if v else "")
     return styles
 
 
