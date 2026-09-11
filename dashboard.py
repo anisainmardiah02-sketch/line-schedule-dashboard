@@ -41,7 +41,7 @@ def line_sort_key(x):
 def load_schedule(file):
     df = pd.read_excel(file, sheet_name="SMT Schedule", header=None)
 
-    # Each day is its own 11-column block; find them by locating "MO#" headers
+    # Each day is its own column block; find them by locating "MO#" headers
     header_row = df.iloc[1]
     block_starts = [c for c in df.columns if str(header_row[c]).strip() == "MO#"]
 
@@ -53,19 +53,28 @@ def load_schedule(file):
 
     records = []
     n_cols = df.shape[1]
-    for bs in block_starts:
+    for idx, bs in enumerate(block_starts):
         date_val = pd.to_datetime(df.iloc[0, bs]).date()
         weekday = df.iloc[0, bs + 1]
 
-        block_idxs = [c for c in range(bs, bs + 11) if c < n_cols]
-        block = df.iloc[2:, [0] + block_idxs].copy()
-        block.columns = ["Line"] + col_labels[: len(block_idxs)]
+        # Each block runs until the next block's "MO#" (or end of sheet) — width can vary
+        block_end = block_starts[idx + 1] if idx + 1 < len(block_starts) else n_cols
 
-        # Pad any missing trailing columns (e.g. Remark) so the shape is always consistent
+        # Find each expected column by matching its header text within this block's range,
+        # instead of assuming a fixed column offset (layouts sometimes shift between files)
+        col_map = {}
+        for c in range(bs, block_end):
+            label = str(header_row[c]).strip()
+            if label in col_labels and label not in col_map:
+                col_map[label] = c
+
+        block = pd.DataFrame(index=df.index[2:])
         for lbl in col_labels:
-            if lbl not in block.columns:
+            if lbl in col_map:
+                block[lbl] = df.iloc[2:, col_map[lbl]]
+            else:
                 block[lbl] = pd.NA
-        block = block[["Line"] + col_labels]
+        block.insert(0, "Line", df.iloc[2:, 0])
 
         block["Date"] = date_val
         block["Weekday"] = weekday
