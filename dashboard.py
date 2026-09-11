@@ -52,11 +52,21 @@ def load_schedule(file):
                   "Release Date", "Pcs/Pnl", "UPH", "LT", "Remark"]
 
     records = []
+    n_cols = df.shape[1]
     for bs in block_starts:
         date_val = pd.to_datetime(df.iloc[0, bs]).date()
         weekday = df.iloc[0, bs + 1]
-        block = df.iloc[2:, [0] + list(range(bs, bs + 11))].copy()
-        block.columns = ["Line"] + col_labels
+
+        block_idxs = [c for c in range(bs, bs + 11) if c < n_cols]
+        block = df.iloc[2:, [0] + block_idxs].copy()
+        block.columns = ["Line"] + col_labels[: len(block_idxs)]
+
+        # Pad any missing trailing columns (e.g. Remark) so the shape is always consistent
+        for lbl in col_labels:
+            if lbl not in block.columns:
+                block[lbl] = pd.NA
+        block = block[["Line"] + col_labels]
+
         block["Date"] = date_val
         block["Weekday"] = weekday
         records.append(block)
