@@ -1,3 +1,5 @@
+import re
+
 import streamlit as st
 import pandas as pd
 
@@ -20,7 +22,16 @@ div[data-testid="stMetricValue"] { color: #8a5a8f; }
 """, unsafe_allow_html=True)
 
 st.markdown("# 🗓️ Weekly Line Schedule")
-st.caption("What model is running on each line, each day this week — with Qual runs flagged.")
+st.caption("What model is running on each line, each day this week — with Qual / Internal build / New PN runs flagged.")
+
+# Words searched for in the Remark column. Each trigger type has its own pattern,
+# so people can write it in different ways (e.g. "Line Qual", "Internal build", "new PN").
+TRIGGER_PATTERNS = {
+    "Qual": r"qual",
+    "Internal build": r"internal",
+    "New PN": r"new\s*p/?n\b|new\s*part",
+}
+TRIGGER_TYPES = list(TRIGGER_PATTERNS.keys()) + ["Other keywords"]
 
 # ---- 1. UPLOAD FILE ----
 uploaded_file = st.file_uploader("Upload your PD Schedule Excel file", type=["xlsx"])
@@ -82,39 +93,90 @@ def load_schedule(file):
 
     sched = pd.concat(records, ignore_index=True)
     sched = sched.dropna(subset=["MO#"])
-    sched["Qual"] = sched["Remark"].astype(str).str.contains("qual", case=False, na=False)
     return sched
+
+
+def find_triggers(remark, extra_words):
+    """Return (list of trigger types found, the remark line that mentions it)."""
+    if pd.isna(remark):
+        return [], ""
+    text = str(remark)
+    found = [name for name, pat in TRIGGER_PATTERNS.items() if re.search(pat, text, re.IGNORECASE)]
+    if any(w in text.lower() for w in extra_words):
+        found.append("Other keywords")
+
+    lines = [ln.strip() for ln in text.split("\n") if ln.strip()]
+    snippet = lines[0] if lines else ""
+    for ln in lines:
+        hit = any(re.search(p, ln, re.IGNORECASE) for p in TRIGGER_PATTERNS.values())
+        if hit or any(w in ln.lower() for w in extra_words):
+            snippet = ln
+            break
+    return found, snippet[:120]
 
 
 sched = load_schedule(uploaded_file)
 line_order = sorted(sched["Line"].dropna().unique(), key=line_sort_key)
 dates = sorted(sched["Date"].unique())
 
-# ---- 2. KPI METRICS ----
+# ---- 2. TRIGGER SETTINGS ----
+with st.expander("⚙️ Trigger settings — what counts as a flagged run"):
+    st.write(
+        "The Remark column is scanned for: **Qual** (e.g. Line Qual), "
+        "**Internal build** (anything with the word 'internal'), and "
+        "**New PN** ('new PN', 'new P/N', 'new part')."
+    )
+    extra_text = st.text_input(
+        "Extra trigger words (comma-separated)", "",
+        help="Add any other word people use, e.g. control run, pilot, trial",
+    )
+extra_words = [w.strip().lower() for w in extra_text.split(",") if w.strip()]
+
+results = sched["Remark"].apply(lambda r: find_triggers(r, extra_words))
+sched["Trigger"] = results.apply(lambda x: ", ".join(x[0]))
+sched["Snippet"] = results.apply(lambda x: x[1])
+sched["Flagged"] = sched["Trigger"] != ""
+
+flagged = sched[sched["Flagged"]]
+if len(flagged) > 0:
+    groups = (
+        flagged.groupby(["Line", "MO#", "Description", "Trigger", "Snippet"], dropna=False)
+        .agg(First=("Date", "min"), Last=("Date", "max"))
+        .reset_index()
+    )
+    groups = groups.assign(
+        _key=[(g.First, line_sort_key(g.Line)) for g in groups.itertuples()]
+    ).sort_values("_key").drop(columns="_key")
+else:
+    groups = flagged
+
+# ---- 3. KPI METRICS ----
 k1, k2, k3, k4 = st.columns(4)
 k1.metric("Total MOs this week", len(sched))
 k2.metric("Active lines", sched["Line"].nunique())
 k3.metric("Days covered", sched["Date"].nunique())
-k4.metric("⚠️ Qual triggers", int(sched["Qual"].sum()))
+k4.metric("⚠️ Flagged MOs", len(groups))
 
 st.write("")
 
-# ---- 3. QUAL ALERT BANNER ----
-qual_rows = sched[sched["Qual"]]
-if len(qual_rows) > 0:
-    st.error(f"⚠️ {len(qual_rows)} Line Qual run(s) detected this week — check before releasing.")
-    for _, row in qual_rows.iterrows():
-        remark_snippet = str(row["Remark"]).split("\n")[0][:100]
+# ---- 4. FLAGGED RUNS ALERT BANNER ----
+if len(groups) > 0:
+    st.error(f"⚠️ {len(groups)} flagged MO(s) this week (Qual / Internal build / New PN) — check before releasing.")
+    for _, g in groups.iterrows():
+        if g["First"] == g["Last"]:
+            when = g["First"].strftime("%d %b")
+        else:
+            when = f"{g['First'].strftime('%d %b')} – {g['Last'].strftime('%d %b')}"
         st.markdown(
-            f"- **{row['Line']}** · {row['Date']} · MO# `{row['MO#']}` · "
-            f"{row['Description']} — _{remark_snippet}_"
+            f"- **{g['Line']}** · {when} · MO# `{g['MO#']}` · {g['Description']} — "
+            f"**{g['Trigger']}** — _{g['Snippet']}_"
         )
 else:
-    st.success("✅ No Line Qual runs flagged this week.")
+    st.success("✅ No Qual / Internal build / New PN runs flagged this week.")
 
 st.write("")
 
-# ---- 4. LINE × DATE MODEL GRID ----
+# ---- 5. LINE × DATE MODEL GRID ----
 st.subheader("Model running by line and day")
 
 pivot_desc = (
@@ -123,8 +185,8 @@ pivot_desc = (
     .unstack(fill_value="")
     .reindex(index=line_order, columns=dates, fill_value="")
 )
-pivot_qual = (
-    sched.groupby(["Line", "Date"])["Qual"]
+pivot_flag = (
+    sched.groupby(["Line", "Date"])["Flagged"]
     .any()
     .unstack(fill_value=False)
     .reindex(index=line_order, columns=dates, fill_value=False)
@@ -132,38 +194,39 @@ pivot_qual = (
 
 # Format date column headers nicely
 pivot_desc.columns = [d.strftime("%a %m/%d") for d in pivot_desc.columns]
-pivot_qual.columns = pivot_desc.columns
+pivot_flag.columns = pivot_desc.columns
 
 
-def highlight_qual(_):
-    styles = pivot_qual.map(lambda v: "background-color: #e6c9e0; font-weight: 600;" if v else "")
-    return styles
+def highlight_flagged(_):
+    return pivot_flag.map(lambda v: "background-color: #e6c9e0; font-weight: 600;" if v else "")
 
 
 st.dataframe(
-    pivot_desc.style.apply(highlight_qual, axis=None),
+    pivot_desc.style.apply(highlight_flagged, axis=None),
     use_container_width=True,
 )
-st.caption("🔴 Highlighted cells contain a Line Qual run that day.")
+st.caption("🟪 Highlighted cells contain a flagged run (Qual / Internal build / New PN) that day.")
 
 st.write("")
 
-# ---- 5. FILTERABLE DETAIL TABLE ----
+# ---- 6. FILTERABLE DETAIL TABLE ----
 st.subheader("Full schedule detail")
 
 f1, f2, f3 = st.columns([1, 1, 2])
 with f1:
     line_filter = st.selectbox("Line", ["All lines"] + line_order)
 with f2:
-    qual_only = st.checkbox("Show Qual runs only")
+    trigger_filter = st.selectbox("Show", ["All runs", "Any flagged"] + TRIGGER_TYPES)
 with f3:
     search = st.text_input("Search MO#, PN, description...", "")
 
 table = sched.copy()
 if line_filter != "All lines":
     table = table[table["Line"] == line_filter]
-if qual_only:
-    table = table[table["Qual"]]
+if trigger_filter == "Any flagged":
+    table = table[table["Flagged"]]
+elif trigger_filter != "All runs":
+    table = table[table["Trigger"].str.contains(trigger_filter, regex=False)]
 if search:
     s = search.lower()
     mask = (
@@ -174,7 +237,7 @@ if search:
     table = table[mask]
 
 display_cols = ["Line", "Date", "Weekday", "MO#", "PN", "Description",
-                 "MO Qty", "Plan Qty", "MO status", "Qual"]
+                 "MO Qty", "Plan Qty", "MO status", "Trigger"]
 display_table = table[display_cols].sort_values(["Date", "Line"])
 
 st.download_button(
