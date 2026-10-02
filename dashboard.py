@@ -21,17 +21,21 @@ div[data-testid="stMetricValue"] { color: #8a5a8f; }
 </style>
 """, unsafe_allow_html=True)
 
-st.markdown("# 🗓️ Weekly Line Schedule")
-st.caption("What model is running on each line, each day this week — with Qual / Internal build / New PN runs flagged.")
-
 # Words searched for in the Remark column. Each trigger type has its own pattern,
 # so people can write it in different ways (e.g. "Line Qual", "Internal build", "new PN").
 TRIGGER_PATTERNS = {
     "Qual": r"qual",
     "Internal build": r"internal",
     "New PN": r"new\s*p/?n\b|new\s*part",
+    "Change from": r"chang(?:e|ed|es)\s+from",
+    "Transfer": r"transfer",
+    "First build": r"(?:first|1st)[\s-]*build",
 }
 TRIGGER_TYPES = list(TRIGGER_PATTERNS.keys()) + ["Other keywords"]
+TRIGGER_LABEL = " / ".join(TRIGGER_PATTERNS.keys())
+
+st.markdown("# 🗓️ Weekly Line Schedule")
+st.caption(f"What model is running on each line, each day this week — with {TRIGGER_LABEL} runs flagged.")
 
 # ---- 1. UPLOAD FILE ----
 uploaded_file = st.file_uploader("Upload your PD Schedule Excel file", type=["xlsx"])
@@ -123,8 +127,10 @@ dates = sorted(sched["Date"].unique())
 with st.expander("⚙️ Trigger settings — what counts as a flagged run"):
     st.write(
         "The Remark column is scanned for: **Qual** (e.g. Line Qual), "
-        "**Internal build** (anything with the word 'internal'), and "
-        "**New PN** ('new PN', 'new P/N', 'new part')."
+        "**Internal build** (the word 'internal'), "
+        "**New PN** ('new PN', 'new P/N', 'new part'), "
+        "**Change from** ('change from', 'changed from'), "
+        "**Transfer**, and **First build** ('first build', '1st build')."
     )
     extra_text = st.text_input(
         "Extra trigger words (comma-separated)", "",
@@ -161,7 +167,7 @@ st.write("")
 
 # ---- 4. FLAGGED RUNS ALERT BANNER ----
 if len(groups) > 0:
-    st.error(f"⚠️ {len(groups)} flagged MO(s) this week (Qual / Internal build / New PN) — check before releasing.")
+    st.error(f"⚠️ {len(groups)} flagged MO(s) this week ({TRIGGER_LABEL}) — check before releasing.")
     for _, g in groups.iterrows():
         if g["First"] == g["Last"]:
             when = g["First"].strftime("%d %b")
@@ -172,7 +178,7 @@ if len(groups) > 0:
             f"**{g['Trigger']}** — _{g['Snippet']}_"
         )
 else:
-    st.success("✅ No Qual / Internal build / New PN runs flagged this week.")
+    st.success(f"✅ No {TRIGGER_LABEL} runs flagged this week.")
 
 st.write("")
 
@@ -205,7 +211,7 @@ st.dataframe(
     pivot_desc.style.apply(highlight_flagged, axis=None),
     use_container_width=True,
 )
-st.caption("🟪 Highlighted cells contain a flagged run (Qual / Internal build / New PN) that day.")
+st.caption(f"🟪 Highlighted cells contain a flagged run ({TRIGGER_LABEL}) that day.")
 
 st.write("")
 
