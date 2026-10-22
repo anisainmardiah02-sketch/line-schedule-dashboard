@@ -30,6 +30,7 @@ TRIGGER_PATTERNS = {
     "Change from": r"chang(?:e|ed|es)\s+from",
     "Transfer": r"transfer",
     "First build": r"(?:first|1st)[\s-]*build",
+    "OQ build": r"\bo\.?q\b|\boq[\s-]*build",
 }
 TRIGGER_TYPES = list(TRIGGER_PATTERNS.keys()) + ["Other keywords"]
 TRIGGER_LABEL = " / ".join(TRIGGER_PATTERNS.keys())
@@ -130,7 +131,8 @@ with st.expander("⚙️ Trigger settings — what counts as a flagged run"):
         "**Internal build** (the word 'internal'), "
         "**New PN** ('new PN', 'new P/N', 'new part'), "
         "**Change from** ('change from', 'changed from'), "
-        "**Transfer**, and **First build** ('first build', '1st build')."
+        "**Transfer**, **First build** ('first build', '1st build'), "
+        "and **OQ build** (the word 'OQ', e.g. 'OQ build')."
     )
     extra_text = st.text_input(
         "Extra trigger words (comma-separated)", "",
@@ -162,6 +164,20 @@ k1.metric("Total MOs this week", len(sched))
 k2.metric("Active lines", sched["Line"].nunique())
 k3.metric("Days covered", sched["Date"].nunique())
 k4.metric("⚠️ Flagged MOs", len(groups))
+
+st.write("")
+
+# ---- 3b. HOW MANY MOs EACH TRIGGER TYPE FOUND ----
+count_types = TRIGGER_TYPES if extra_words else TRIGGER_TYPES[:-1]
+chips = []
+for name in count_types:
+    n = int(groups["Trigger"].str.contains(name, regex=False).sum()) if len(groups) > 0 else 0
+    bg, fg, weight = ("#e6c9e0", "#5a3a60", "700") if n else ("#efe9e6", "#a09a9e", "400")
+    chips.append(
+        f'<span style="display:inline-block;margin:2px 6px 2px 0;padding:4px 12px;border-radius:16px;'
+        f'background:{bg};color:{fg};font-weight:{weight};font-size:0.85rem;">{name} · {n}</span>'
+    )
+st.markdown("**Triggers found this week**<br>" + "".join(chips), unsafe_allow_html=True)
 
 st.write("")
 
